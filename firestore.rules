@@ -1,0 +1,75 @@
+// =====================================================================
+// NWAE Store — Firestore security rules
+//
+// IMPORTANT: change ADMIN_EMAIL on the line below to YOUR email
+// (the same one you put in src/config.ts), then paste this whole file
+// into Firebase console → Firestore Database → Rules → Publish.
+// =====================================================================
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 👇 PUT YOUR ADMIN EMAIL HERE (must match src/config.ts)
+    function adminEmail() {
+      return "admin@example.com";
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == adminEmail().lower();
+    }
+
+    // -------- users: each signed-in user owns their own profile --------
+    match /users/{uid} {
+      allow read:   if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && request.auth.uid == uid;
+      allow delete: if false;
+    }
+
+    // -------- products: anyone can read, only admin can change ---------
+    match /products/{id} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // -------- store settings: anyone signed-in reads (for paypal email),
+    //                          only admin writes ----------------------
+    match /settings/{id} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // -------- orders: buyer reads/creates own; admin reads/updates all -
+    match /orders/{id} {
+      allow read:   if isSignedIn() && (
+                       resource.data.buyerUid == request.auth.uid || isAdmin()
+                    );
+      allow create: if isSignedIn()
+                    && request.resource.data.buyerUid == request.auth.uid
+                    && request.resource.data.status == "awaiting_payment";
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // -------- chat messages: buyer of the order + admin can read/post -
+    match /chats/{orderId}/messages/{msgId} {
+      function order() {
+        return get(/databases/$(database)/documents/orders/$(orderId)).data;
+      }
+      allow read:   if isSignedIn() && (order().buyerUid == request.auth.uid || isAdmin());
+      allow create: if isSignedIn()
+                    && (order().buyerUid == request.auth.uid || isAdmin())
+                    && request.resource.data.fromUid == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+  }
+}
